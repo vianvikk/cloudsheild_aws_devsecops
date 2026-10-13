@@ -1,0 +1,9 @@
+variable "aws_region" { type = string
+  default = "ap-south-1" }
+variable "project_name" { type = string
+  default = "cloudshield" }
+variable "state_bucket" { type = string }
+variable "cluster_version" { type = string
+  default = "1.33" }
+variable "app_namespace" { type = string
+  default = "cloudshield" }

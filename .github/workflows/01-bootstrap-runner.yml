@@ -1,0 +1,41 @@
+name: 01 Bootstrap AWS Runner
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'infra/bootstrap/**'
+      - '.github/workflows/01-bootstrap-runner.yml'
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+      TF_IN_AUTOMATION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-south-1' }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+      - name: Create encrypted S3 state bucket
+        id: state
+        run: |
+          BUCKET="$(bash scripts/bootstrap-state.sh)"
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+      - name: Terraform init and apply bootstrap
+        working-directory: infra/bootstrap
+        env:
+          TF_VAR_aws_region: ${{ vars.AWS_REGION || 'ap-south-1' }}
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_repo: ${{ github.event.repository.name }}
+        run: |
+          terraform init -input=false -backend-config="bucket=${{ steps.state.outputs.bucket }}" -backend-config="key=bootstrap/terraform.tfstate" -backend-config="region=${AWS_REGION}" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
+          terraform validate
+          terraform apply -auto-approve -input=false
+          terraform output

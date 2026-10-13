@@ -1,0 +1,75 @@
+name: 03 CI Scan Build Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  ci-security-deploy:
+    runs-on: [self-hosted, linux, cloudshield]
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+      SONAR_HOST_URL: http://localhost:9000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify required tools
+        run: |
+          docker --version
+          terraform version
+          trivy --version
+          aws --version
+      - name: Unit tests and production build
+        working-directory: app
+        run: |
+          npm install
+          npm test
+          npm run build
+      - name: SonarQube source analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          test -n "$SONAR_TOKEN" || (echo "Configure SONAR_TOKEN repository secret after SonarQube first login" && exit 1)
+          docker run --rm --network host -e SONAR_HOST_URL -e SONAR_TOKEN -v "$GITHUB_WORKSPACE:/usr/src" sonarsource/sonar-scanner-cli:11 -Dsonar.projectKey=cloudshield-frontend -Dsonar.projectName=cloudshield-frontend -Dsonar.sources=app/src -Dsonar.tests=app/src -Dsonar.test.inclusions='**/*.test.jsx' -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+      - name: Trivy filesystem scan
+        run: trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed .
+      - name: Build image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: docker build -f docker/Dockerfile -t cloudshield-frontend:"$IMAGE_TAG" .
+      - name: Trivy image scan
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed cloudshield-frontend:"$IMAGE_TAG"
+      - name: Login to ECR and push immutable image
+        id: ecr
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cloudshield-frontend"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          docker tag cloudshield-frontend:"$IMAGE_TAG" "${ECR_URI}:${IMAGE_TAG}"
+          docker push "${ECR_URI}:${IMAGE_TAG}"
+          echo "image=${ECR_URI}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+      - name: Configure EKS access
+        run: |
+          aws eks update-kubeconfig --region "$AWS_REGION" --name cloudshield-eks
+          kubectl get nodes
+      - name: Deploy to EKS
+        env:
+          IMAGE_URI: ${{ steps.ecr.outputs.image }}
+        run: |
+          kubectl apply -f k8s/deployment.yaml --dry-run=client -o yaml >/tmp/deployment.yaml
+          sed "s|IMAGE_PLACEHOLDER|${IMAGE_URI}|g" k8s/deployment.yaml | kubectl apply -f -
+          kubectl apply -f k8s/service.yaml
+          kubectl -n cloudshield rollout status deployment/cloudshield-frontend --timeout=300s
+      - name: Print public application endpoint
+        run: |
+          for i in $(seq 1 30); do
+            HOST="$(kubectl -n cloudshield get svc cloudshield-frontend -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+            [[ -n "$HOST" ]] && break
+            sleep 10
+          done
+          if [[ -n "${HOST:-}" ]]; then echo "Application URL: http://${HOST}"; else echo "Load balancer is provisioning; check: kubectl -n cloudshield get svc cloudshield-frontend"; fi

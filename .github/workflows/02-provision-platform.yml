@@ -1,0 +1,35 @@
+name: 02 Provision EKS Platform
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["01 Bootstrap AWS Runner"]
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  platform:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, linux, cloudshield]
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+      TF_IN_AUTOMATION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve state bucket
+        id: state
+        run: |
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          echo "bucket=cloudshield-tfstate-${ACCOUNT_ID}-${AWS_REGION}" >> "$GITHUB_OUTPUT"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+      - name: Provision ECR, EKS, Prometheus and Grafana
+        working-directory: infra/platform
+        env:
+          TF_VAR_aws_region: ${{ vars.AWS_REGION || 'ap-south-1' }}
+          TF_VAR_state_bucket: ${{ steps.state.outputs.bucket }}
+        run: |
+          terraform init -input=false -backend-config="bucket=${TF_VAR_state_bucket}" -backend-config="key=platform/terraform.tfstate" -backend-config="region=${AWS_REGION}" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
+          terraform validate
+          terraform apply -auto-approve -input=false
+          terraform output

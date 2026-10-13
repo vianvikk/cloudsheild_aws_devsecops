@@ -1,0 +1,14 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+*.auto.tfvars
+.env
+.env.*
+node_modules/
+dist/
+coverage/
+.DS_Store
+kubeconfig
+*.pem

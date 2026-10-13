@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloudshield-frontend
+  namespace: cloudshield
+  labels:
+    app.kubernetes.io/name: cloudshield-frontend
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: cloudshield-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,0 +1,18 @@
+grafana:
+  enabled: true
+  admin:
+    existingSecret: ""
+  service:
+    type: ClusterIP
+  defaultDashboardsEnabled: true
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+alertmanager:
+  enabled: true
+nodeExporter:
+  enabled: true
+kubeStateMetrics:
+  enabled: true
