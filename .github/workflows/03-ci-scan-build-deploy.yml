@@ -8,7 +8,7 @@ permissions:
   id-token: write
 jobs:
   ci-security-deploy:
-    runs-on: [self-hosted, linux, cloudshield]
+    runs-on: ubuntu-latest
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
       SONAR_HOST_URL: http://localhost:9000
